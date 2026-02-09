@@ -12,7 +12,7 @@ int createMasterPassword() {
     char hashed_password[crypto_pwhash_STRBYTES];
     puts("Enter Password");
     char password[100];
-    scanf("%s", password);
+    scanf("%16s", password);
     if (hash(password, hashed_password) != 0) {
         return -1;
     }
