@@ -1,6 +1,8 @@
+#pragma once
+#include <sqlite3.h>
 #ifndef FIRST_C_PROJECT_DATABASE_H
+
 #define FIRST_C_PROJECT_DATABASE_H
-#include "sqlite3.h"
 
 #define DB_NAME "identifier.sqlite"
 #define CREATE_TABLE                                        \

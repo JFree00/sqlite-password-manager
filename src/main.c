@@ -1,11 +1,11 @@
 #include <sodium.h>
+#include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../include/database.h"
 #include "../include/encryption.h"
-#include "../include/sqlite3.h"
 
 typedef struct {
   int argc;

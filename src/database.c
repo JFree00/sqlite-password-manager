@@ -40,9 +40,10 @@ int db_read(sqlite3 *db, const char *sql,
 }
 int db_init(sqlite3 **db, const char *filename, bool readonly) {
   char *err = nullptr;
-  if (db_open(filename, db,
-              (readonly ? SQLITE_OPEN_READONLY : SQLITE_OPEN_READWRITE)) !=
-      SQLITE_OK) {
+  int flags = readonly ? SQLITE_OPEN_READONLY
+                       : (SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE);
+
+  if (db_open(filename, db, flags) != SQLITE_OK) {
     if (db && *db) {
       db_close(*db);
       *db = nullptr;
