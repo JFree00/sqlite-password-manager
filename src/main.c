@@ -17,10 +17,11 @@ int AddEntry(sqlite3 *db, char **err) {
   char hash[crypto_pwhash_STRBYTES];
 
   char password[100];
+  sodium_mlock(password, sizeof(password));
   puts("Enter Password");
   scanf("%s", password);
 
-  if (createPassword(password, hash) != 0) {
+  if (createPassword(password, hash, sizeof(password)) != 0) {
     return -1;
   }
   char entry_name[100];

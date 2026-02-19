@@ -18,29 +18,41 @@ static void enable_fast_pwhash_for_tests(void) {
 
 void test_hash() {
   char out[crypto_pwhash_STRBYTES];
-  int res = hash(TEST_PASSWORD, out);
-  TEST_ASSERT_EQUAL(res, 0);
+  char password[124] = TEST_PASSWORD;
+  sodium_mlock(password, sizeof(password));
+  int res = hash(password, out, crypto_pwhash_STRBYTES);
+  TEST_ASSERT_EQUAL(0, res);
 }
 
 void test_check_hash_against_password_success() {
   char out[crypto_pwhash_STRBYTES];
-  hash(TEST_PASSWORD, out);
+  char password[124] = TEST_PASSWORD;
+  sodium_mlock(password, sizeof(password));
+  hash(password, out, sizeof(password));
+  // Password is now empty
+  // Re-init
+  char copyPassword[124] = TEST_PASSWORD;
 
-  int res = check(TEST_PASSWORD, out);
-  TEST_ASSERT_EQUAL(res, 0);
+  int res = check(copyPassword, out, sizeof(password));
+  TEST_ASSERT_EQUAL(0, res);
 }
 void test_check_hash_against_password_failure() {
   char out[crypto_pwhash_STRBYTES];
-  hash(TEST_PASSWORD, out);
+  char password[124] = TEST_PASSWORD;
+  sodium_mlock(password, sizeof(password));
+  hash(password, out, crypto_pwhash_STRBYTES);
 
-  int res = check("WRONG PASSWORD", out);
-  TEST_ASSERT_NOT_EQUAL(res, 0);
+  char wrong_password[124] = "WRONG PASSWORD";
+  int res = check(wrong_password, out, crypto_pwhash_STRBYTES);
+  TEST_ASSERT_NOT_EQUAL(0, res);
 }
 
 void test_create_password() {
   char out[crypto_pwhash_STRBYTES];
-  int res = createPassword(TEST_PASSWORD, out);
-  TEST_ASSERT_EQUAL(res, 0);
+  char password[124] = TEST_PASSWORD;
+  sodium_mlock(password, sizeof(password));
+  int res = createPassword(password, out, crypto_pwhash_STRBYTES);
+  TEST_ASSERT_EQUAL(0, res);
 }
 int main() {
   if (sodium_init() < 0) {
