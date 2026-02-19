@@ -1,4 +1,4 @@
-#include <sodium/crypto_pwhash.h>
+#include <stdlib.h>
 
 #include "../include/encryption.h"
 #include "unity/unity.h"
@@ -7,6 +7,14 @@
 void setUp(void) {}
 
 void tearDown(void) {}
+
+static void enable_fast_pwhash_for_tests(void) {
+#ifdef _WIN32
+  _putenv("PWHASH_FAST=1");
+#else
+  setenv("PWHASH_FAST", "1", 1);
+#endif
+}
 
 void test_hash() {
   char out[crypto_pwhash_STRBYTES];
@@ -35,6 +43,10 @@ void test_create_password() {
   TEST_ASSERT_EQUAL(res, 0);
 }
 int main() {
+  if (sodium_init() < 0) {
+    exit(EXIT_FAILURE);
+  };
+  enable_fast_pwhash_for_tests();
   UNITY_BEGIN();
   RUN_TEST(test_hash);
   RUN_TEST(test_check_hash_against_password_success);

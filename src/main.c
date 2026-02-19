@@ -1,4 +1,3 @@
-#include <sodium.h>
 #include <sqlite3.h>
 #include <stdio.h>
 #include <stdlib.h>
