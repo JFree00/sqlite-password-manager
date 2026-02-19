@@ -33,11 +33,9 @@ target_link_libraries(first_c_project_test_encryption PRIVATE core_logic)
 add_test(NAME DatabaseTest COMMAND first_c_project_test_database)
 add_test(NAME EncryptionTest COMMAND first_c_project_test_encryption)
 
-# 1. Define where the executable goes
 install(TARGETS first_c_project
         RUNTIME DESTINATION bin)
 
-# 2. Tell vcpkg to automatically copy DLLs (Windows only) to the bin folder
 if (WIN32)
     set(X_VCPKG_APPLOCAL_DEPS ON)
 endif ()
