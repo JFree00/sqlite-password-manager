@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 4.1)
 if (CMAKE_SYSTEM_NAME STREQUAL "Linux")
-    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=address -g -O1 -fno-omit-frame-pointer")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -fsanitize=address -g -O0 -fno-omit-frame-pointer")
 endif ()
 project(first_c_project C)
 enable_testing()
