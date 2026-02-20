@@ -18,7 +18,8 @@
   ") "                                                      \
   "without rowid;"
 
-#define SELECT_ALL "select * from main_table;"
+#define SELECT_ALL \
+  "select entry_name, username, created_at, modified_at from main_table;"
 int db_open(const char *filename, sqlite3 **out, int flags);
 
 int db_close(sqlite3 *filename);

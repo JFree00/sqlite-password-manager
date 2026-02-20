@@ -47,30 +47,54 @@ int AddEntry(sqlite3 *db, char **err) {
 int DisplayEntry(void *ctx, int argc, char **value, char **name) {
   read_data *index = (read_data *)ctx;
   if (index->argc == 0) {
+    int username_index = -1;
     // get longest value
     for (int i = 0; i < argc; i++) {
+      if (name[i] && strcmp(name[i], "username") == 0) {
+        username_index = i;
+      }
       if (value[i] && name[i] && strlen(value[i]) > index->length) {
-        if (strcmp(name[i], "hash") == 0) {
-          continue;
-        }
         index->length = strlen(value[i]);
       }
+    }
+    if (index->min_length > index->length) {
+      index->length = index->min_length;
+    }
+    if ((int)strlen("password") > index->length) {
+      index->length = (int)strlen("password");
+    }
+    if ((int)strlen("****") > index->length) {
+      index->length = (int)strlen("****");
     }
     // columns
     for (int i = 0; i < argc; i++) {
       printf("%-*s  ", (int)index->length, name[i]);
+      if (i == username_index) {
+        printf("%-*s  ", (int)index->length, "password");
+      }
+    }
+    if (username_index == -1) {
+      printf("%-*s  ", (int)index->length, "password");
     }
     puts("");
   }
 
   // values
+  int username_index = -1;
   for (int i = 0; i < argc; i++) {
-    // TODO: stop retrieving hashes
-    if (strcmp(name[i], "hash") == 0) {
-      printf("%-*s  ", (int)index->length, "****");
-      continue;
+    if (name[i] && strcmp(name[i], "username") == 0) {
+      username_index = i;
+      break;
     }
+  }
+  for (int i = 0; i < argc; i++) {
     printf("%-*s  ", (int)index->length, value[i] ? value[i] : "NULL");
+    if (i == username_index) {
+      printf("%-*s  ", (int)index->length, "****");
+    }
+  }
+  if (username_index == -1) {
+    printf("%-*s  ", (int)index->length, "****");
   }
   puts("");
   *(int *)index += 1;
