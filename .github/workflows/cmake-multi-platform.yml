@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ "add-workflow" ]
+    branches-ignore: [ "master" ]
   pull_request:
     branches: [ "master" ]
 
