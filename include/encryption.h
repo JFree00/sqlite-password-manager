@@ -19,5 +19,13 @@ int hash_secure(const secure_buf *sb, char *out);
 int check_secure(const secure_buf *sb, const char *hash);
 
 int createPassword(const char *input, char *out);
+/* Encrypts a string with secretbox (XSalsa20-Poly1305),
+ * random nonce, then base64-encodes nonce+ciphertext as a storage string. */
+int encrypt_with_master_key(const char *plaintext, const char *master_key,
+                            char **out);
+/* Decodes and decrypts a value produced by encrypt_with_master_key using the
+ * same master key and secretbox algorithm. */
+int decrypt_with_master_key(const char *encoded, const char *master_key,
+                            char **out);
 
 #endif  // FIRST_C_PROJECT_ENCRYPTION_H
