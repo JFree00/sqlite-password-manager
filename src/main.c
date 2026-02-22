@@ -68,12 +68,33 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf) {
   }
 
   if (!has_master_key) {
+    char master_key_confirm[100] = {0};
+    secure_buf master_key_confirm_buf = {0};
     char master_key_hash[crypto_pwhash_STRBYTES];
+    if (secure_buf_lock(&master_key_confirm_buf, master_key_confirm,
+                        sizeof(master_key_confirm)) != 0) {
+      return -1;
+    }
     puts("No master key found. Create a master key");
     if (scanf("%99s", master_key_buf->buf) != 1) {
+      secure_buf_unlock(&master_key_confirm_buf);
+      return -1;
+    }
+    puts("Re-enter master key");
+    if (scanf("%99s", master_key_confirm_buf.buf) != 1) {
+      secure_buf_unlock(&master_key_confirm_buf);
+      return -1;
+    }
+    if (strcmp(master_key_buf->buf, master_key_confirm_buf.buf) != 0) {
+      puts("Master keys do not match");
+      secure_buf_unlock(&master_key_confirm_buf);
       return -1;
     }
     if (hash_secure(master_key_buf, master_key_hash) != 0) {
+      secure_buf_unlock(&master_key_confirm_buf);
+      return -1;
+    }
+    if (secure_buf_unlock(&master_key_confirm_buf) != 0) {
       return -1;
     }
     int set_res = set_master_key(db, master_key_hash);
