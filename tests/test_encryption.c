@@ -1,4 +1,5 @@
 #include <stdlib.h>
+#include <string.h>
 
 #include "../include/encryption.h"
 #include "unity/unity.h"
@@ -62,6 +63,25 @@ void test_create_password() {
   int res = createPassword(TEST_PASSWORD, out);
   TEST_ASSERT_EQUAL(0, res);
 }
+
+void test_encrypt_decrypt_with_master_key() {
+  const char *plaintext = "entry-value";
+  const char *master_key = "master-key";
+  char *ciphertext = nullptr;
+  char *decrypted = nullptr;
+
+  TEST_ASSERT_EQUAL(0, encrypt_with_master_key(plaintext, master_key, &ciphertext));
+  TEST_ASSERT_NOT_NULL(ciphertext);
+  TEST_ASSERT_NOT_EQUAL(0, strcmp(ciphertext, plaintext));
+
+  TEST_ASSERT_EQUAL(0, decrypt_with_master_key(ciphertext, master_key, &decrypted));
+  TEST_ASSERT_NOT_NULL(decrypted);
+  TEST_ASSERT_EQUAL_STRING(plaintext, decrypted);
+
+  free(ciphertext);
+  free(decrypted);
+}
+
 int main() {
   if (sodium_init() < 0) {
     exit(EXIT_FAILURE);
@@ -72,5 +92,6 @@ int main() {
   RUN_TEST(test_check_hash_against_password_success);
   RUN_TEST(test_check_hash_against_password_failure);
   RUN_TEST(test_create_password);
+  RUN_TEST(test_encrypt_decrypt_with_master_key);
   return UNITY_END();
 }

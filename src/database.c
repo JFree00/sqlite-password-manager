@@ -2,6 +2,7 @@
 #include "../include/encryption.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 int db_close(sqlite3 *filename) { return sqlite3_close(filename); }
 
@@ -78,19 +79,41 @@ int db_init(sqlite3 **db, const char *filename, bool readonly) {
 }
 
 int create_entry(sqlite3 *db, const char *entry_name, const char *username,
-                 const char *hash) {
+                 const char *hash, const char *master_key) {
   const char *sql =
       "insert into main_table (entry_name, username, hash) values (?, ?, ?)";
-  sqlite3_stmt *stmt;
+  sqlite3_stmt *stmt = nullptr;
+  char *entry_name_enc = nullptr;
+  char *username_enc = nullptr;
+  char *hash_enc = nullptr;
+
+  if (!db || !entry_name || !username || !hash || !master_key) {
+    return SQLITE_MISUSE;
+  }
+
+  if (encrypt_with_master_key(entry_name, master_key, &entry_name_enc) != 0 ||
+      encrypt_with_master_key(username, master_key, &username_enc) != 0 ||
+      encrypt_with_master_key(hash, master_key, &hash_enc) != 0) {
+    free(entry_name_enc);
+    free(username_enc);
+    free(hash_enc);
+    return SQLITE_ERROR;
+  }
 
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
-    return -1;
+    free(entry_name_enc);
+    free(username_enc);
+    free(hash_enc);
+    return SQLITE_ERROR;
   }
-  sqlite3_bind_text(stmt, 1, entry_name, -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 2, username, -1, SQLITE_STATIC);
-  sqlite3_bind_text(stmt, 3, hash, -1, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 1, entry_name_enc, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 2, username_enc, -1, SQLITE_TRANSIENT);
+  sqlite3_bind_text(stmt, 3, hash_enc, -1, SQLITE_TRANSIENT);
   const int res = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
+  free(entry_name_enc);
+  free(username_enc);
+  free(hash_enc);
   return res;
 }
 int dehash_entry(sqlite3 *db, char **err) { return 0; }

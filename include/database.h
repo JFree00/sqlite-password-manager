@@ -43,7 +43,7 @@ int db_read(sqlite3 *db, const char *sql,
             char **err);
 
 int create_entry(sqlite3 *db, const char *entry_name, const char *username,
-                 const char *hash);
+                 const char *hash, const char *master_key);
 
 int dehash_entry(sqlite3 *db, char **err);
 

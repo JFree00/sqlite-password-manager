@@ -19,5 +19,9 @@ int hash_secure(const secure_buf *sb, char *out);
 int check_secure(const secure_buf *sb, const char *hash);
 
 int createPassword(const char *input, char *out);
+int encrypt_with_master_key(const char *plaintext, const char *master_key,
+                            char **out);
+int decrypt_with_master_key(const char *encoded, const char *master_key,
+                            char **out);
 
 #endif  // FIRST_C_PROJECT_ENCRYPTION_H

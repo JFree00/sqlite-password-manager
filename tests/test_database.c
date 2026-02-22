@@ -3,6 +3,7 @@
 #include <sodium/crypto_pwhash.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "../include/database.h"
 #include "../include/encryption.h"
@@ -11,6 +12,7 @@
 #define TEST_ENTRY_NAME "test_entry_name"
 #define TEST_USERNAME "test_username"
 #define TEST_PASSWORD "test_password"
+#define TEST_MASTER_KEY "master-key"
 
 static void enable_fast_pwhash_for_tests(void) {
 #ifdef _WIN32
@@ -35,9 +37,12 @@ void tearDown(void) {
 }
 
 void test_create_entry_success(void) {
-  char hash[crypto_pwhash_STRBYTES];
+  char hash[crypto_pwhash_STRBYTES] = {0};
   char *err = nullptr;
-  int create_res = create_entry(db, TEST_ENTRY_NAME, TEST_USERNAME, hash);
+  TEST_ASSERT_EQUAL_INT(0, createPassword(TEST_PASSWORD, hash));
+  int create_res =
+      create_entry(db, TEST_ENTRY_NAME, TEST_USERNAME, hash, TEST_MASTER_KEY);
+  TEST_ASSERT_EQUAL_INT(SQLITE_DONE, create_res);
   int res = db_execute(db, SELECT_ALL, nullptr, nullptr, &err);
   if (err) {
     printf("SQLite error: %s\n", err);
@@ -47,7 +52,8 @@ void test_create_entry_success(void) {
 }
 void test_create_entry_failure(void) {
   char hash[crypto_pwhash_STRBYTES] = {0};
-  int create_res = create_entry(nullptr, TEST_ENTRY_NAME, TEST_USERNAME, hash);
+  int create_res =
+      create_entry(nullptr, TEST_ENTRY_NAME, TEST_USERNAME, hash, TEST_MASTER_KEY);
   TEST_ASSERT_NOT_EQUAL(0, create_res);
 }
 void test_db_init_open_failure(void) {
@@ -101,6 +107,31 @@ void test_master_key_lifecycle(void) {
   TEST_ASSERT_EQUAL_INT(SQLITE_AUTH, verify_res);
 }
 
+void test_create_entry_stores_encrypted_values(void) {
+  char hash[crypto_pwhash_STRBYTES] = {0};
+  sqlite3_stmt *stmt = nullptr;
+
+  TEST_ASSERT_EQUAL_INT(0, createPassword(TEST_PASSWORD, hash));
+  TEST_ASSERT_EQUAL_INT(SQLITE_DONE, create_entry(db, TEST_ENTRY_NAME, TEST_USERNAME,
+                                                  hash, TEST_MASTER_KEY));
+
+  TEST_ASSERT_EQUAL_INT(
+      SQLITE_OK,
+      sqlite3_prepare_v2(db, "select entry_name, username from main_table limit 1",
+                         -1, &stmt, nullptr));
+  TEST_ASSERT_EQUAL_INT(SQLITE_ROW, sqlite3_step(stmt));
+
+  const char *stored_entry_name = (const char *)sqlite3_column_text(stmt, 0);
+  const char *stored_username = (const char *)sqlite3_column_text(stmt, 1);
+
+  TEST_ASSERT_NOT_NULL(stored_entry_name);
+  TEST_ASSERT_NOT_NULL(stored_username);
+  TEST_ASSERT_NOT_EQUAL(0, strcmp(stored_entry_name, TEST_ENTRY_NAME));
+  TEST_ASSERT_NOT_EQUAL(0, strcmp(stored_username, TEST_USERNAME));
+
+  sqlite3_finalize(stmt);
+}
+
 int main() {
   if (sodium_init() < 0) {
     return 1;
@@ -114,6 +145,7 @@ int main() {
   RUN_TEST(test_db_init_open_failure);
   RUN_TEST(test_db_init_template_failure);
   RUN_TEST(test_master_key_lifecycle);
+  RUN_TEST(test_create_entry_stores_encrypted_values);
   if (db != nullptr) db_close(db);
   return UNITY_END();
 }
