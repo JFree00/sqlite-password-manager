@@ -53,6 +53,9 @@ int AddEntry(sqlite3 *db, const char *master_key, char **err) {
   return 0;
 }
 
+/* First run: creates and stores master-key verifier hash.
+ * Subsequent runs: verifies provided plaintext master key against stored hash.
+ */
 int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf) {
   bool has_master_key = false;
   if (master_key_exists(db, &has_master_key) != SQLITE_OK) {
@@ -92,6 +95,7 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf) {
   return 0;
 }
 
+/* Decrypt only columns that are stored encrypted at rest. */
 static int should_decrypt_column(const char *column_name) {
   if (!column_name) {
     return 0;
@@ -177,6 +181,7 @@ int DisplayEntry(void *ctx, int argc, char **value, char **name) {
   *(int *)index += 1;
   return 0;
 }
+/* Loads rows and decrypts encrypted display columns with session master key. */
 int GetEntries(sqlite3 *db, const char *master_key, char **err) {
   read_data data = {0, 0, 10, master_key};
   return GetAllEntries(db, DisplayEntry, &data, err);

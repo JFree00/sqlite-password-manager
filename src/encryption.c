@@ -12,14 +12,16 @@ static int use_fast_pwhash(void) {
   return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
 }
 
-static int derive_master_key_bytes(const char *master_key,
-                                   unsigned char key[crypto_secretbox_KEYBYTES]) {
+/* Derives a symmetric key from the master key text using BLAKE2b
+ * (crypto_generichash). This is a fast derivation, not a password-hard KDF. */
+static int derive_master_key_bytes(
+    const char *master_key, unsigned char key[crypto_secretbox_KEYBYTES]) {
   if (!master_key || !key) {
     return -1;
   }
   if (crypto_generichash(key, crypto_secretbox_KEYBYTES,
-                         (const unsigned char *)master_key,
-                         strlen(master_key), nullptr, 0) != 0) {
+                         (const unsigned char *)master_key, strlen(master_key),
+                         nullptr, 0) != 0) {
     return -1;
   }
   return 0;
@@ -65,16 +67,16 @@ int hash(const char *password, char *out) {
 int check(const char *password, const char *hash) {
   return crypto_pwhash_str_verify(hash, password, strlen(password));
 }
-/// Get a hash for the value stored in the secure-buf. Only works with secure
-/// memory.
+/* Get a hash for the value stored in the secure-buf. Only works with secure
+ memory.*/
 int hash_secure(const secure_buf *sb, char *out) {
   if (!sb || sb->magic != SECURE_BUF_MAGIC || !sb->buf || sb->len == 0) {
     return -1;
   }
   return hash(sb->buf, out);
 }
-/// Check a hash against the value stored in the secure-buf. Only works with
-/// secure memory.
+/* Check a hash against the value stored in the secure-buf. Only works with
+ secure memory.*/
 int check_secure(const secure_buf *sb, const char *hash_value) {
   if (!sb || sb->magic != SECURE_BUF_MAGIC || !sb->buf || sb->len == 0) {
     return -1;
@@ -89,6 +91,8 @@ int createPassword(const char *input, char *out) {
   return 0;
 }
 
+/* Encrypt plaintext with XSalsa20-Poly1305 secretbox, prepend nonce, then
+ * base64-encode with a "v1:" prefix for storage/versioning. */
 int encrypt_with_master_key(const char *plaintext, const char *master_key,
                             char **out) {
   unsigned char key[crypto_secretbox_KEYBYTES];
@@ -147,6 +151,8 @@ int encrypt_with_master_key(const char *plaintext, const char *master_key,
   return 0;
 }
 
+/* Parse "v1:"+base64 payload, split nonce/ciphertext, and decrypt via
+ * secretbox_open_easy (XSalsa20-Poly1305 authenticated decryption). */
 int decrypt_with_master_key(const char *encoded, const char *master_key,
                             char **out) {
   unsigned char key[crypto_secretbox_KEYBYTES];
