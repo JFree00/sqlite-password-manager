@@ -1,4 +1,5 @@
 #include "../include/database.h"
+#include "../include/encryption.h"
 
 #include <stdio.h>
 
@@ -64,6 +65,15 @@ int db_init(sqlite3 **db, const char *filename, bool readonly) {
     *db = nullptr;
     return 2;
   }
+  if (db_write(*db, CREATE_MASTER_KEY_TABLE, &err) != SQLITE_OK) {
+    if (err) {
+      printf("SQLite error: %s\n", err);
+      sqlite3_free(err);
+    }
+    db_close(*db);
+    *db = nullptr;
+    return 2;
+  }
   return 0;
 }
 
@@ -88,4 +98,78 @@ int dehash_entry(sqlite3 *db, char **err) { return 0; }
 int GetAllEntries(sqlite3 *db, int (*callback)(void *, int, char **, char **),
                   void *callback_data, char **err) {
   return db_read(db, SELECT_ALL, callback, callback_data, err);
+}
+
+int set_master_key(sqlite3 *db, const char *hash) {
+  const char *sql =
+      "insert into master_key (id, hash) values (1, ?) "
+      "on conflict(id) do update set hash = excluded.hash, "
+      "modified_at = CURRENT_TIMESTAMP";
+  sqlite3_stmt *stmt = nullptr;
+
+  if (!db || !hash) {
+    return SQLITE_MISUSE;
+  }
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return SQLITE_ERROR;
+  }
+  sqlite3_bind_text(stmt, 1, hash, -1, SQLITE_STATIC);
+  const int res = sqlite3_step(stmt);
+  sqlite3_finalize(stmt);
+  return res;
+}
+
+int master_key_exists(sqlite3 *db, bool *exists) {
+  const char *sql = "select 1 from master_key where id = 1 limit 1";
+  sqlite3_stmt *stmt = nullptr;
+
+  if (!db || !exists) {
+    return SQLITE_MISUSE;
+  }
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return SQLITE_ERROR;
+  }
+  int step_res = sqlite3_step(stmt);
+  if (step_res == SQLITE_ROW) {
+    *exists = true;
+    sqlite3_finalize(stmt);
+    return SQLITE_OK;
+  }
+  if (step_res == SQLITE_DONE) {
+    *exists = false;
+    sqlite3_finalize(stmt);
+    return SQLITE_OK;
+  }
+
+  sqlite3_finalize(stmt);
+  return step_res;
+}
+
+int verify_master_key(sqlite3 *db, const char *master_key) {
+  const char *sql = "select hash from master_key where id = 1 limit 1";
+  sqlite3_stmt *stmt = nullptr;
+
+  if (!db || !master_key) {
+    return SQLITE_MISUSE;
+  }
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return SQLITE_ERROR;
+  }
+
+  const int step_res = sqlite3_step(stmt);
+  if (step_res != SQLITE_ROW) {
+    sqlite3_finalize(stmt);
+    if (step_res == SQLITE_DONE) {
+      return SQLITE_NOTFOUND;
+    }
+    return step_res;
+  }
+
+  const unsigned char *hash_value = sqlite3_column_text(stmt, 0);
+  int is_valid = 0;
+  if (hash_value) {
+    is_valid = (check(master_key, (const char *)hash_value) == 0);
+  }
+  sqlite3_finalize(stmt);
+  return is_valid ? SQLITE_OK : SQLITE_AUTH;
 }

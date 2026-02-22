@@ -22,7 +22,10 @@ int AddEntry(sqlite3 *db, char **err) {
     return -1;
   }
   puts("Enter Password");
-  scanf("%s", password);
+  if (scanf("%99s", password) != 1) {
+    secure_buf_unlock(&password_buf);
+    return -1;
+  }
 
   if (hash_secure(&password_buf, hash) != 0) {
     secure_buf_unlock(&password_buf);
@@ -34,12 +37,65 @@ int AddEntry(sqlite3 *db, char **err) {
   char entry_name[100];
   char username[100];
   puts("enter the entry name");
-  scanf("%s", entry_name);
+  if (scanf("%99s", entry_name) != 1) {
+    return -1;
+  }
   puts("enter the username");
-  scanf("%s", username);
+  if (scanf("%99s", username) != 1) {
+    return -1;
+  }
   int res = create_entry(db, entry_name, username, hash);
   if (res != SQLITE_DONE) {
     puts(sqlite3_errstr(res));
+    return -1;
+  }
+  return 0;
+}
+
+int SetupMasterKey(sqlite3 *db) {
+  bool has_master_key = false;
+  if (master_key_exists(db, &has_master_key) != SQLITE_OK) {
+    return -1;
+  }
+
+  char master_key[100];
+  secure_buf master_key_buf = {0};
+  if (secure_buf_lock(&master_key_buf, master_key, sizeof(master_key)) != 0) {
+    return -1;
+  }
+
+  if (!has_master_key) {
+    char master_key_hash[crypto_pwhash_STRBYTES];
+    puts("No master key found. Create a master key");
+    if (scanf("%99s", master_key) != 1) {
+      secure_buf_unlock(&master_key_buf);
+      return -1;
+    }
+    if (hash_secure(&master_key_buf, master_key_hash) != 0) {
+      secure_buf_unlock(&master_key_buf);
+      return -1;
+    }
+    if (secure_buf_unlock(&master_key_buf) != 0) {
+      return -1;
+    }
+    int set_res = set_master_key(db, master_key_hash);
+    if (set_res != SQLITE_DONE && set_res != SQLITE_OK) {
+      return -1;
+    }
+    return 0;
+  }
+
+  puts("Enter master key");
+  if (scanf("%99s", master_key) != 1) {
+    secure_buf_unlock(&master_key_buf);
+    return -1;
+  }
+  const int verify_res = verify_master_key(db, master_key);
+  if (secure_buf_unlock(&master_key_buf) != 0) {
+    return -1;
+  }
+  if (verify_res != SQLITE_OK) {
+    puts("Invalid master key");
     return -1;
   }
   return 0;
@@ -126,11 +182,15 @@ int main(void) {
     fprintf(stderr, "Failed to initialize database\n");
     return EXIT_FAILURE;
   }
+  if (SetupMasterKey(db) != 0) {
+    fprintf(stderr, "Failed to authenticate master key\n");
+    db_close(db);
+    return EXIT_FAILURE;
+  }
   puts("1 to display entries. 2 to add to db\n");
-  char input[64];
   int CHOICE = 0;
-  if (fgets(input, sizeof(input), stdin)) {
-    CHOICE = (int)strtol(input, nullptr, 10);
+  if (scanf("%d", &CHOICE) != 1) {
+    CHOICE = 0;
   }
   int res = 0;
   switch (CHOICE) {
