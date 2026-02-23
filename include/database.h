@@ -46,8 +46,8 @@ int db_read(sqlite3 *db, const char *sql,
             int (*callback)(void *, int, char **, char **), void *callback_data,
             char **err);
 
-/* Encrypts entry fields with a vault key (secretbox + random nonce + base64)
- * and inserts into main_table. */
+/* Creates one entry row after encrypting each sensitive field with the
+ * unlocked vault key. */
 int create_entry(sqlite3 *db, const char *entry_name, const char *username,
                  const char *hash, const unsigned char *vault_key,
                  size_t vault_key_len);
@@ -56,7 +56,8 @@ int dehash_entry(sqlite3 *db, char **err);
 
 int GetAllEntries(sqlite3 *db, int (*callback)(void *, int, char **, char **),
                   void *callback_data, char **err);
-/* Stores master auth hash plus KDF salt and wrapped vault key in master_key. */
+/* Persists all unlock material for id=1: auth hash, KDF salt, and wrapped
+ * vault key. */
 int set_master_key_material(sqlite3 *db, const char *hash,
                             const unsigned char *kdf_salt,
                             size_t kdf_salt_len,
@@ -66,7 +67,8 @@ int master_key_exists(sqlite3 *db, bool *exists);
 /* Verifies the provided master key against the stored crypto_pwhash hash using
  * crypto_pwhash_str_verify. */
 int verify_master_key(sqlite3 *db, const char *master_key);
-/* Loads KDF salt and wrapped vault key from master_key. */
+/* Loads KDF salt and wrapped vault key so the app can derive unwrap key at
+ * login and recover the session vault key. */
 int get_master_key_material(sqlite3 *db, unsigned char *kdf_salt,
                             size_t kdf_salt_len, char **vault_key_encrypted);
 int db_init(sqlite3 **db, const char *filename, bool readonly);

@@ -98,6 +98,7 @@ int derive_wrapping_key(const char *master_key, const unsigned char *salt,
     memlimit = crypto_pwhash_MEMLIMIT_MIN;
   }
 
+  // This key is used to unwrap the stored vault key after login.
   if (crypto_pwhash(out_key, crypto_secretbox_KEYBYTES, master_key,
                     strlen(master_key), salt, opslimit, memlimit,
                     crypto_pwhash_ALG_DEFAULT) != 0) {
@@ -137,6 +138,7 @@ int encrypt_with_vault_key(const char *plaintext, const unsigned char *vault_key
     return -1;
   }
 
+  // Fresh nonce per value keeps ciphertext unique even for same plaintext.
   randombytes_buf(nonce, sizeof(nonce));
   if (crypto_secretbox_easy(ciphertext, (const unsigned char *)plaintext,
                             plaintext_len, nonce, vault_key) != 0) {
@@ -149,6 +151,7 @@ int encrypt_with_vault_key(const char *plaintext, const unsigned char *vault_key
   memcpy(combined, nonce, ENC_NONCE_BYTES);
   memcpy(combined + ENC_NONCE_BYTES, ciphertext, ciphertext_len);
 
+  // Stored layout: "v1:" + base64(nonce || ciphertext+mac).
   memcpy(encoded, ENC_PREFIX, strlen(ENC_PREFIX));
   sodium_bin2base64(encoded + strlen(ENC_PREFIX), encoded_len, combined,
                     combined_len, sodium_base64_VARIANT_ORIGINAL);
@@ -176,6 +179,7 @@ int decrypt_with_vault_key(const char *encoded, const unsigned char *vault_key,
     return -1;
   }
 
+  // Strip prefix and decode nonce+ciphertext before authenticated decrypt.
   const char *base64_payload = encoded + prefix_len;
   const size_t payload_len = strlen(base64_payload);
   const size_t max_combined_len = payload_len;

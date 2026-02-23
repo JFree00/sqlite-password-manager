@@ -16,6 +16,8 @@ typedef struct {
 
 void onClose() {}
 
+/* Prompts for entry fields and stores a fully encrypted row using session
+ * vault key. */
 int AddEntry(sqlite3 *db, const unsigned char *vault_key, size_t vault_key_len,
              char **err) {
   char hash[crypto_pwhash_STRBYTES];
@@ -74,6 +76,7 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf,
   }
 
   if (!has_master_key) {
+    // First run path: collect master password and setup vault key material.
     char master_key_confirm[100] = {0};
     secure_buf master_key_confirm_buf = {0};
     char master_key_hash[crypto_pwhash_STRBYTES];
@@ -109,12 +112,14 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf,
       return -1;
     }
 
+    // Generate per-install salt, then derive unwrap key from master password.
     randombytes_buf(kdf_salt, sizeof(kdf_salt));
     if (derive_wrapping_key(master_key_buf->buf, kdf_salt, sizeof(kdf_salt),
                             wrapping_key) != 0) {
       return -1;
     }
 
+    // Create random vault key used for all entry encryption this session.
     randombytes_buf(vault_key_out, vault_key_out_len);
     vault_key_plain_len = sodium_base64_ENCODED_LEN(
         vault_key_out_len, sodium_base64_VARIANT_ORIGINAL);
@@ -134,6 +139,7 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf,
       return -1;
     }
 
+    // Persist auth hash + salt + wrapped vault key as the single source of truth.
     int set_res =
         set_master_key_material(db, master_key_hash, kdf_salt, sizeof(kdf_salt),
                                 vault_key_wrapped);
@@ -152,6 +158,7 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf,
   char *vault_key_plain = nullptr;
   size_t decoded_len = 0;
 
+  // Normal login path: verify password, then unwrap existing vault key.
   puts("Enter master key");
   if (scanf("%99s", master_key_buf->buf) != 1) {
     return -1;
@@ -176,6 +183,7 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf,
     sodium_memzero(wrapping_key, sizeof(wrapping_key));
     return -1;
   }
+  // Convert stored base64 vault key back to raw bytes for runtime use.
   if (sodium_base642bin(vault_key_out, vault_key_out_len, vault_key_plain,
                         strlen(vault_key_plain), nullptr, &decoded_len, nullptr,
                         sodium_base64_VARIANT_ORIGINAL) != 0 ||
@@ -209,6 +217,7 @@ int DisplayEntry(void *ctx, int argc, char **value, char **name) {
       if (name[i] && strcmp(name[i], "username") == 0) {
         username_index = i;
       }
+      // Decrypt only encrypted display columns; leave metadata as-is.
       if (value[i] && should_decrypt_column(name[i]) &&
           is_encrypted_value(value[i])) {
         if (decrypt_with_vault_key(value[i], index->vault_key,
@@ -311,6 +320,7 @@ int main(void) {
     secure_buf_unlock(&master_key_buf);
     return EXIT_FAILURE;
   }
+  // Authenticates user and fills session_vault_key for this process lifetime.
   if (SetupMasterKey(db, &master_key_buf, session_vault_key,
                      sizeof(session_vault_key)) != 0) {
     fprintf(stderr, "Failed to authenticate master key\n");

@@ -58,6 +58,7 @@ int db_init(sqlite3 **db, const char *filename, bool readonly) {
   if (readonly) return 0;
 #endif
 
+  // Create entries table for vault rows.
   if (db_write(*db, CREATE_TABLE, &err) != SQLITE_OK) {
     if (err) {
       printf("SQLite error: %s\n", err);
@@ -67,6 +68,7 @@ int db_init(sqlite3 **db, const char *filename, bool readonly) {
     *db = nullptr;
     return 2;
   }
+  // Create singleton table that holds login + vault unlock material.
   if (db_write(*db, CREATE_MASTER_KEY_TABLE, &err) != SQLITE_OK) {
     if (err) {
       printf("SQLite error: %s\n", err);
@@ -94,6 +96,7 @@ int create_entry(sqlite3 *db, const char *entry_name, const char *username,
     return SQLITE_MISUSE;
   }
 
+  // Encrypt each sensitive value before insert; DB never sees plaintext.
   if (encrypt_with_vault_key(entry_name, vault_key, vault_key_len,
                              &entry_name_enc) != 0 ||
       encrypt_with_vault_key(username, vault_key, vault_key_len,
@@ -132,6 +135,7 @@ int set_master_key_material(sqlite3 *db, const char *hash,
                             const unsigned char *kdf_salt,
                             size_t kdf_salt_len,
                             const char *vault_key_encrypted) {
+  // Upsert single row (id=1) so re-initialization can rotate material cleanly.
   const char *sql =
       "insert into master_key (id, hash, kdf_salt, vault_key_encrypted) "
       "values (1, ?, ?, ?) "
@@ -202,6 +206,7 @@ int verify_master_key(sqlite3 *db, const char *master_key) {
     return step_res;
   }
 
+  // Only checks auth hash; it does not decrypt entries directly.
   const unsigned char *hash_value = sqlite3_column_text(stmt, 0);
   int is_valid = 0;
   if (hash_value) {
@@ -234,6 +239,7 @@ int get_master_key_material(sqlite3 *db, unsigned char *kdf_salt,
     return step_res;
   }
 
+  // Read raw salt + wrapped key, then hand back owned copies to caller.
   const void *salt_blob = sqlite3_column_blob(stmt, 0);
   const int salt_blob_len = sqlite3_column_bytes(stmt, 0);
   const unsigned char *vault_key_text = sqlite3_column_text(stmt, 1);

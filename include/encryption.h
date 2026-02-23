@@ -21,14 +21,16 @@ int check_secure(const secure_buf *sb, const char *hash);
 int createPassword(const char *input, char *out);
 /* Returns 1 when value matches the encrypted storage format prefix ("v1:"). */
 int is_encrypted_value(const char *value);
-/* Derives wrapping key from master password using crypto_pwhash (Argon2id). */
+/* Derives the temporary unwrap key from master password + salt using
+ * crypto_pwhash (Argon2id). */
 int derive_wrapping_key(const char *master_key, const unsigned char *salt,
                         size_t salt_len,
                         unsigned char out_key[crypto_secretbox_KEYBYTES]);
-/* Encrypts plaintext with vault key via secretbox and returns "v1:"+base64. */
+/* Encrypts text with vault key using secretbox and returns a storable
+ * "v1:"+base64 payload. */
 int encrypt_with_vault_key(const char *plaintext, const unsigned char *vault_key,
                            size_t vault_key_len, char **out);
-/* Decrypts "v1:"+base64 using the vault key. */
+/* Decrypts a "v1:"+base64 payload with the vault key. */
 int decrypt_with_vault_key(const char *encoded, const unsigned char *vault_key,
                            size_t vault_key_len, char **out);
 
