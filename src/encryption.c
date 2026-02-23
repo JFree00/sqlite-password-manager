@@ -12,20 +12,6 @@ static int use_fast_pwhash(void) {
   return value != NULL && value[0] != '\0' && strcmp(value, "0") != 0;
 }
 
-/* Derives a symmetric key from the master key text using BLAKE2b
- * (crypto_generichash). This is a fast derivation, not a password-hard KDF. */
-static int derive_master_key_bytes(
-    const char *master_key, unsigned char key[crypto_secretbox_KEYBYTES]) {
-  if (!master_key || !key) {
-    return -1;
-  }
-  if (crypto_generichash(key, crypto_secretbox_KEYBYTES,
-                         (const unsigned char *)master_key, strlen(master_key),
-                         nullptr, 0) != 0) {
-    return -1;
-  }
-  return 0;
-}
 /// Must be used prior to *_secure functions. Locks input memory
 int secure_buf_lock(secure_buf *sb, char *buf, size_t len) {
   if (!sb || !buf || len == 0) {
@@ -91,17 +77,46 @@ int createPassword(const char *input, char *out) {
   return 0;
 }
 
+int is_encrypted_value(const char *value) {
+  if (!value) {
+    return 0;
+  }
+  return strncmp(value, ENC_PREFIX, strlen(ENC_PREFIX)) == 0;
+}
+
+int derive_wrapping_key(const char *master_key, const unsigned char *salt,
+                        size_t salt_len,
+                        unsigned char out_key[crypto_secretbox_KEYBYTES]) {
+  unsigned long long opslimit = crypto_pwhash_OPSLIMIT_INTERACTIVE;
+  size_t memlimit = crypto_pwhash_MEMLIMIT_INTERACTIVE;
+
+  if (!master_key || !salt || !out_key || salt_len != crypto_pwhash_SALTBYTES) {
+    return -1;
+  }
+  if (use_fast_pwhash()) {
+    opslimit = crypto_pwhash_OPSLIMIT_MIN;
+    memlimit = crypto_pwhash_MEMLIMIT_MIN;
+  }
+
+  if (crypto_pwhash(out_key, crypto_secretbox_KEYBYTES, master_key,
+                    strlen(master_key), salt, opslimit, memlimit,
+                    crypto_pwhash_ALG_DEFAULT) != 0) {
+    return -1;
+  }
+  return 0;
+}
+
 /* Encrypt plaintext with XSalsa20-Poly1305 secretbox, prepend nonce, then
  * base64-encode with a "v1:" prefix for storage/versioning. */
-int encrypt_with_master_key(const char *plaintext, const char *master_key,
-                            char **out) {
-  unsigned char key[crypto_secretbox_KEYBYTES];
+int encrypt_with_vault_key(const char *plaintext, const unsigned char *vault_key,
+                           size_t vault_key_len, char **out) {
   unsigned char nonce[ENC_NONCE_BYTES];
   unsigned char *ciphertext = nullptr;
   unsigned char *combined = nullptr;
   char *encoded = nullptr;
 
-  if (!plaintext || !master_key || !out) {
+  if (!plaintext || !vault_key || !out ||
+      vault_key_len != crypto_secretbox_KEYBYTES) {
     return -1;
   }
 
@@ -112,10 +127,6 @@ int encrypt_with_master_key(const char *plaintext, const char *master_key,
       sodium_base64_ENCODED_LEN(combined_len, sodium_base64_VARIANT_ORIGINAL);
   const size_t result_len = strlen(ENC_PREFIX) + encoded_len + 1;
 
-  if (derive_master_key_bytes(master_key, key) != 0) {
-    return -1;
-  }
-
   ciphertext = (unsigned char *)malloc(ciphertext_len);
   combined = (unsigned char *)malloc(combined_len);
   encoded = (char *)malloc(result_len);
@@ -123,17 +134,15 @@ int encrypt_with_master_key(const char *plaintext, const char *master_key,
     free(ciphertext);
     free(combined);
     free(encoded);
-    sodium_memzero(key, sizeof(key));
     return -1;
   }
 
   randombytes_buf(nonce, sizeof(nonce));
   if (crypto_secretbox_easy(ciphertext, (const unsigned char *)plaintext,
-                            plaintext_len, nonce, key) != 0) {
+                            plaintext_len, nonce, vault_key) != 0) {
     free(ciphertext);
     free(combined);
     free(encoded);
-    sodium_memzero(key, sizeof(key));
     return -1;
   }
 
@@ -147,24 +156,23 @@ int encrypt_with_master_key(const char *plaintext, const char *master_key,
 
   free(ciphertext);
   free(combined);
-  sodium_memzero(key, sizeof(key));
   return 0;
 }
 
 /* Parse "v1:"+base64 payload, split nonce/ciphertext, and decrypt via
  * secretbox_open_easy (XSalsa20-Poly1305 authenticated decryption). */
-int decrypt_with_master_key(const char *encoded, const char *master_key,
-                            char **out) {
-  unsigned char key[crypto_secretbox_KEYBYTES];
+int decrypt_with_vault_key(const char *encoded, const unsigned char *vault_key,
+                           size_t vault_key_len, char **out) {
   unsigned char *combined = nullptr;
   unsigned char *plaintext = nullptr;
 
-  if (!encoded || !master_key || !out) {
+  if (!encoded || !vault_key || !out ||
+      vault_key_len != crypto_secretbox_KEYBYTES) {
     return -1;
   }
 
   const size_t prefix_len = strlen(ENC_PREFIX);
-  if (strncmp(encoded, ENC_PREFIX, prefix_len) != 0) {
+  if (!is_encrypted_value(encoded)) {
     return -1;
   }
 
@@ -200,23 +208,15 @@ int decrypt_with_master_key(const char *encoded, const char *master_key,
     return -1;
   }
 
-  if (derive_master_key_bytes(master_key, key) != 0) {
-    free(combined);
-    free(plaintext);
-    return -1;
-  }
-
   if (crypto_secretbox_open_easy(plaintext, combined + ENC_NONCE_BYTES,
-                                 ciphertext_len, combined, key) != 0) {
+                                 ciphertext_len, combined, vault_key) != 0) {
     free(combined);
     free(plaintext);
-    sodium_memzero(key, sizeof(key));
     return -1;
   }
   plaintext[plaintext_len] = '\0';
   *out = (char *)plaintext;
 
   free(combined);
-  sodium_memzero(key, sizeof(key));
   return 0;
 }

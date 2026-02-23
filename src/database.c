@@ -3,6 +3,7 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 int db_close(sqlite3 *filename) { return sqlite3_close(filename); }
 
@@ -79,7 +80,8 @@ int db_init(sqlite3 **db, const char *filename, bool readonly) {
 }
 
 int create_entry(sqlite3 *db, const char *entry_name, const char *username,
-                 const char *hash, const char *master_key) {
+                 const char *hash, const unsigned char *vault_key,
+                 size_t vault_key_len) {
   const char *sql =
       "insert into main_table (entry_name, username, hash) values (?, ?, ?)";
   sqlite3_stmt *stmt = nullptr;
@@ -87,13 +89,16 @@ int create_entry(sqlite3 *db, const char *entry_name, const char *username,
   char *username_enc = nullptr;
   char *hash_enc = nullptr;
 
-  if (!db || !entry_name || !username || !hash || !master_key) {
+  if (!db || !entry_name || !username || !hash || !vault_key ||
+      vault_key_len != crypto_secretbox_KEYBYTES) {
     return SQLITE_MISUSE;
   }
 
-  if (encrypt_with_master_key(entry_name, master_key, &entry_name_enc) != 0 ||
-      encrypt_with_master_key(username, master_key, &username_enc) != 0 ||
-      encrypt_with_master_key(hash, master_key, &hash_enc) != 0) {
+  if (encrypt_with_vault_key(entry_name, vault_key, vault_key_len,
+                             &entry_name_enc) != 0 ||
+      encrypt_with_vault_key(username, vault_key, vault_key_len,
+                             &username_enc) != 0 ||
+      encrypt_with_vault_key(hash, vault_key, vault_key_len, &hash_enc) != 0) {
     free(entry_name_enc);
     free(username_enc);
     free(hash_enc);
@@ -123,20 +128,29 @@ int GetAllEntries(sqlite3 *db, int (*callback)(void *, int, char **, char **),
   return db_read(db, SELECT_ALL, callback, callback_data, err);
 }
 
-int set_master_key(sqlite3 *db, const char *hash) {
+int set_master_key_material(sqlite3 *db, const char *hash,
+                            const unsigned char *kdf_salt,
+                            size_t kdf_salt_len,
+                            const char *vault_key_encrypted) {
   const char *sql =
-      "insert into master_key (id, hash) values (1, ?) "
+      "insert into master_key (id, hash, kdf_salt, vault_key_encrypted) "
+      "values (1, ?, ?, ?) "
       "on conflict(id) do update set hash = excluded.hash, "
+      "kdf_salt = excluded.kdf_salt, "
+      "vault_key_encrypted = excluded.vault_key_encrypted, "
       "modified_at = CURRENT_TIMESTAMP";
   sqlite3_stmt *stmt = nullptr;
 
-  if (!db || !hash) {
+  if (!db || !hash || !kdf_salt || !vault_key_encrypted ||
+      kdf_salt_len == 0) {
     return SQLITE_MISUSE;
   }
   if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
     return SQLITE_ERROR;
   }
   sqlite3_bind_text(stmt, 1, hash, -1, SQLITE_STATIC);
+  sqlite3_bind_blob(stmt, 2, kdf_salt, (int)kdf_salt_len, SQLITE_STATIC);
+  sqlite3_bind_text(stmt, 3, vault_key_encrypted, -1, SQLITE_STATIC);
   const int res = sqlite3_step(stmt);
   sqlite3_finalize(stmt);
   return res;
@@ -195,4 +209,49 @@ int verify_master_key(sqlite3 *db, const char *master_key) {
   }
   sqlite3_finalize(stmt);
   return is_valid ? SQLITE_OK : SQLITE_AUTH;
+}
+
+int get_master_key_material(sqlite3 *db, unsigned char *kdf_salt,
+                            size_t kdf_salt_len, char **vault_key_encrypted) {
+  const char *sql =
+      "select kdf_salt, vault_key_encrypted from master_key "
+      "where id = 1 limit 1";
+  sqlite3_stmt *stmt = nullptr;
+
+  if (!db || !kdf_salt || kdf_salt_len == 0 || !vault_key_encrypted) {
+    return SQLITE_MISUSE;
+  }
+  if (sqlite3_prepare_v2(db, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+    return SQLITE_ERROR;
+  }
+
+  const int step_res = sqlite3_step(stmt);
+  if (step_res != SQLITE_ROW) {
+    sqlite3_finalize(stmt);
+    if (step_res == SQLITE_DONE) {
+      return SQLITE_NOTFOUND;
+    }
+    return step_res;
+  }
+
+  const void *salt_blob = sqlite3_column_blob(stmt, 0);
+  const int salt_blob_len = sqlite3_column_bytes(stmt, 0);
+  const unsigned char *vault_key_text = sqlite3_column_text(stmt, 1);
+  size_t wrapped_len = 0;
+  if (!salt_blob || !vault_key_text || salt_blob_len != (int)kdf_salt_len) {
+    sqlite3_finalize(stmt);
+    return SQLITE_ERROR;
+  }
+
+  memcpy(kdf_salt, salt_blob, kdf_salt_len);
+  wrapped_len = strlen((const char *)vault_key_text);
+  *vault_key_encrypted = (char *)malloc(wrapped_len + 1);
+  if (*vault_key_encrypted) {
+    memcpy(*vault_key_encrypted, vault_key_text, wrapped_len + 1);
+  }
+  sqlite3_finalize(stmt);
+  if (!*vault_key_encrypted) {
+    return SQLITE_NOMEM;
+  }
+  return SQLITE_OK;
 }

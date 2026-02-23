@@ -10,11 +10,14 @@ typedef struct {
   int argc;
   int length;
   int min_length;
-  const char *master_key;
+  const unsigned char *vault_key;
+  size_t vault_key_len;
 } read_data;
 
 void onClose() {}
-int AddEntry(sqlite3 *db, const char *master_key, char **err) {
+
+int AddEntry(sqlite3 *db, const unsigned char *vault_key, size_t vault_key_len,
+             char **err) {
   char hash[crypto_pwhash_STRBYTES];
 
   char password[100];
@@ -45,7 +48,8 @@ int AddEntry(sqlite3 *db, const char *master_key, char **err) {
   if (scanf("%99s", username) != 1) {
     return -1;
   }
-  int res = create_entry(db, entry_name, username, hash, master_key);
+  int res =
+      create_entry(db, entry_name, username, hash, vault_key, vault_key_len);
   if (res != SQLITE_DONE) {
     puts(sqlite3_errstr(res));
     return -1;
@@ -53,17 +57,19 @@ int AddEntry(sqlite3 *db, const char *master_key, char **err) {
   return 0;
 }
 
-/* First run: creates and stores master-key verifier hash.
- * Subsequent runs: verifies provided plaintext master key against stored hash.
+/* First run: stores master auth hash and wrapped random vault key.
+ * Existing setup: verifies master password and unwraps vault key for session.
  */
-int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf) {
+int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf,
+                   unsigned char *vault_key_out, size_t vault_key_out_len) {
   bool has_master_key = false;
   if (master_key_exists(db, &has_master_key) != SQLITE_OK) {
     return -1;
   }
 
   if (!master_key_buf || master_key_buf->magic != SECURE_BUF_MAGIC ||
-      !master_key_buf->buf || master_key_buf->len == 0) {
+      !master_key_buf->buf || master_key_buf->len == 0 || !vault_key_out ||
+      vault_key_out_len != crypto_secretbox_KEYBYTES) {
     return -1;
   }
 
@@ -71,6 +77,12 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf) {
     char master_key_confirm[100] = {0};
     secure_buf master_key_confirm_buf = {0};
     char master_key_hash[crypto_pwhash_STRBYTES];
+    unsigned char kdf_salt[crypto_pwhash_SALTBYTES] = {0};
+    unsigned char wrapping_key[crypto_secretbox_KEYBYTES] = {0};
+    char *vault_key_wrapped = nullptr;
+    char *vault_key_plain = nullptr;
+    size_t vault_key_plain_len = 0;
+
     if (secure_buf_lock(&master_key_confirm_buf, master_key_confirm,
                         sizeof(master_key_confirm)) != 0) {
       return -1;
@@ -90,19 +102,55 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf) {
       secure_buf_unlock(&master_key_confirm_buf);
       return -1;
     }
-    if (hash_secure(master_key_buf, master_key_hash) != 0) {
-      secure_buf_unlock(&master_key_confirm_buf);
-      return -1;
-    }
     if (secure_buf_unlock(&master_key_confirm_buf) != 0) {
       return -1;
     }
-    int set_res = set_master_key(db, master_key_hash);
+    if (hash_secure(master_key_buf, master_key_hash) != 0) {
+      return -1;
+    }
+
+    randombytes_buf(kdf_salt, sizeof(kdf_salt));
+    if (derive_wrapping_key(master_key_buf->buf, kdf_salt, sizeof(kdf_salt),
+                            wrapping_key) != 0) {
+      return -1;
+    }
+
+    randombytes_buf(vault_key_out, vault_key_out_len);
+    vault_key_plain_len = sodium_base64_ENCODED_LEN(
+        vault_key_out_len, sodium_base64_VARIANT_ORIGINAL);
+    vault_key_plain = (char *)malloc(vault_key_plain_len);
+    if (!vault_key_plain) {
+      sodium_memzero(wrapping_key, sizeof(wrapping_key));
+      return -1;
+    }
+    sodium_bin2base64(vault_key_plain, vault_key_plain_len, vault_key_out,
+                      vault_key_out_len, sodium_base64_VARIANT_ORIGINAL);
+
+    if (encrypt_with_vault_key(vault_key_plain, wrapping_key,
+                               sizeof(wrapping_key),
+                               &vault_key_wrapped) != 0) {
+      free(vault_key_plain);
+      sodium_memzero(wrapping_key, sizeof(wrapping_key));
+      return -1;
+    }
+
+    int set_res =
+        set_master_key_material(db, master_key_hash, kdf_salt, sizeof(kdf_salt),
+                                vault_key_wrapped);
+    free(vault_key_plain);
+    free(vault_key_wrapped);
+    sodium_memzero(wrapping_key, sizeof(wrapping_key));
     if (set_res != SQLITE_DONE && set_res != SQLITE_OK) {
       return -1;
     }
     return 0;
   }
+
+  unsigned char kdf_salt[crypto_pwhash_SALTBYTES] = {0};
+  unsigned char wrapping_key[crypto_secretbox_KEYBYTES] = {0};
+  char *vault_key_wrapped = nullptr;
+  char *vault_key_plain = nullptr;
+  size_t decoded_len = 0;
 
   puts("Enter master key");
   if (scanf("%99s", master_key_buf->buf) != 1) {
@@ -113,10 +161,36 @@ int SetupMasterKey(sqlite3 *db, secure_buf *master_key_buf) {
     puts("Invalid master key");
     return -1;
   }
+  if (get_master_key_material(db, kdf_salt, sizeof(kdf_salt),
+                              &vault_key_wrapped) != SQLITE_OK) {
+    return -1;
+  }
+  if (derive_wrapping_key(master_key_buf->buf, kdf_salt, sizeof(kdf_salt),
+                          wrapping_key) != 0) {
+    free(vault_key_wrapped);
+    return -1;
+  }
+  if (decrypt_with_vault_key(vault_key_wrapped, wrapping_key,
+                             sizeof(wrapping_key), &vault_key_plain) != 0) {
+    free(vault_key_wrapped);
+    sodium_memzero(wrapping_key, sizeof(wrapping_key));
+    return -1;
+  }
+  if (sodium_base642bin(vault_key_out, vault_key_out_len, vault_key_plain,
+                        strlen(vault_key_plain), nullptr, &decoded_len, nullptr,
+                        sodium_base64_VARIANT_ORIGINAL) != 0 ||
+      decoded_len != vault_key_out_len) {
+    free(vault_key_wrapped);
+    free(vault_key_plain);
+    sodium_memzero(wrapping_key, sizeof(wrapping_key));
+    return -1;
+  }
+  free(vault_key_wrapped);
+  free(vault_key_plain);
+  sodium_memzero(wrapping_key, sizeof(wrapping_key));
   return 0;
 }
 
-/* Decrypt only columns that are stored encrypted at rest. */
 static int should_decrypt_column(const char *column_name) {
   if (!column_name) {
     return 0;
@@ -129,16 +203,17 @@ int DisplayEntry(void *ctx, int argc, char **value, char **name) {
   read_data *index = (read_data *)ctx;
   if (index->argc == 0) {
     int username_index = -1;
-    // get longest value
     for (int i = 0; i < argc; i++) {
       char *decrypted_value = nullptr;
       const char *display_value = value[i];
       if (name[i] && strcmp(name[i], "username") == 0) {
         username_index = i;
       }
-      if (value[i] && should_decrypt_column(name[i])) {
-        if (decrypt_with_master_key(value[i], index->master_key,
-                                    &decrypted_value) == 0) {
+      if (value[i] && should_decrypt_column(name[i]) &&
+          is_encrypted_value(value[i])) {
+        if (decrypt_with_vault_key(value[i], index->vault_key,
+                                   index->vault_key_len,
+                                   &decrypted_value) == 0) {
           display_value = decrypted_value;
         }
       }
@@ -157,7 +232,6 @@ int DisplayEntry(void *ctx, int argc, char **value, char **name) {
     if ((int)strlen("****") > index->length) {
       index->length = (int)strlen("****");
     }
-    // columns
     for (int i = 0; i < argc; i++) {
       printf("%-*s  ", (int)index->length, name[i]);
       if (i == username_index) {
@@ -170,7 +244,6 @@ int DisplayEntry(void *ctx, int argc, char **value, char **name) {
     puts("");
   }
 
-  // values
   int username_index = -1;
   for (int i = 0; i < argc; i++) {
     if (name[i] && strcmp(name[i], "username") == 0) {
@@ -181,12 +254,12 @@ int DisplayEntry(void *ctx, int argc, char **value, char **name) {
   for (int i = 0; i < argc; i++) {
     char *decrypted_value = nullptr;
     const char *display_value = value[i] ? value[i] : "NULL";
-    if (value[i] && should_decrypt_column(name[i])) {
-      if (decrypt_with_master_key(value[i], index->master_key,
-                                  &decrypted_value) == 0) {
+    if (value[i] && should_decrypt_column(name[i]) &&
+        is_encrypted_value(value[i])) {
+      if (decrypt_with_vault_key(value[i], index->vault_key,
+                                 index->vault_key_len,
+                                 &decrypted_value) == 0) {
         display_value = decrypted_value;
-      } else {
-        display_value = "<decrypt-failed>";
       }
     }
     printf("%-*s  ", (int)index->length, display_value);
@@ -202,9 +275,10 @@ int DisplayEntry(void *ctx, int argc, char **value, char **name) {
   *(int *)index += 1;
   return 0;
 }
-/* Loads rows and decrypts encrypted display columns with session master key. */
-int GetEntries(sqlite3 *db, const char *master_key, char **err) {
-  read_data data = {0, 0, 10, master_key};
+
+int GetEntries(sqlite3 *db, const unsigned char *vault_key, size_t vault_key_len,
+               char **err) {
+  read_data data = {0, 0, 10, vault_key, vault_key_len};
   return GetAllEntries(db, DisplayEntry, &data, err);
 }
 
@@ -217,6 +291,7 @@ int main(void) {
   char *err = nullptr;
   char master_key[100] = {0};
   secure_buf master_key_buf = {0};
+  unsigned char session_vault_key[crypto_secretbox_KEYBYTES] = {0};
   if (secure_buf_lock(&master_key_buf, master_key, sizeof(master_key)) != 0) {
     fprintf(stderr, "Failed to initialize secure master key buffer\n");
     return EXIT_FAILURE;
@@ -236,7 +311,8 @@ int main(void) {
     secure_buf_unlock(&master_key_buf);
     return EXIT_FAILURE;
   }
-  if (SetupMasterKey(db, &master_key_buf) != 0) {
+  if (SetupMasterKey(db, &master_key_buf, session_vault_key,
+                     sizeof(session_vault_key)) != 0) {
     fprintf(stderr, "Failed to authenticate master key\n");
     db_close(db);
     secure_buf_unlock(&master_key_buf);
@@ -251,10 +327,10 @@ int main(void) {
   switch (CHOICE) {
     case 1:
     default:
-      res = GetEntries(db, master_key_buf.buf, &err);
+      res = GetEntries(db, session_vault_key, sizeof(session_vault_key), &err);
       break;
     case 2:
-      res = AddEntry(db, master_key_buf.buf, &err);
+      res = AddEntry(db, session_vault_key, sizeof(session_vault_key), &err);
       break;
   }
   fflush(stdout);
@@ -271,6 +347,7 @@ int main(void) {
   if (db) {
     db_close(db);
   }
+  sodium_memzero(session_vault_key, sizeof(session_vault_key));
   secure_buf_unlock(&master_key_buf);
 
   return res;

@@ -19,13 +19,17 @@ int hash_secure(const secure_buf *sb, char *out);
 int check_secure(const secure_buf *sb, const char *hash);
 
 int createPassword(const char *input, char *out);
-/* Encrypts a string with secretbox (XSalsa20-Poly1305),
- * random nonce, then base64-encodes nonce+ciphertext as a storage string. */
-int encrypt_with_master_key(const char *plaintext, const char *master_key,
-                            char **out);
-/* Decodes and decrypts a value produced by encrypt_with_master_key using the
- * same master key and secretbox algorithm. */
-int decrypt_with_master_key(const char *encoded, const char *master_key,
-                            char **out);
+/* Returns 1 when value matches the encrypted storage format prefix ("v1:"). */
+int is_encrypted_value(const char *value);
+/* Derives wrapping key from master password using crypto_pwhash (Argon2id). */
+int derive_wrapping_key(const char *master_key, const unsigned char *salt,
+                        size_t salt_len,
+                        unsigned char out_key[crypto_secretbox_KEYBYTES]);
+/* Encrypts plaintext with vault key via secretbox and returns "v1:"+base64. */
+int encrypt_with_vault_key(const char *plaintext, const unsigned char *vault_key,
+                           size_t vault_key_len, char **out);
+/* Decrypts "v1:"+base64 using the vault key. */
+int decrypt_with_vault_key(const char *encoded, const unsigned char *vault_key,
+                           size_t vault_key_len, char **out);
 
 #endif  // FIRST_C_PROJECT_ENCRYPTION_H

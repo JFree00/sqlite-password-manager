@@ -64,22 +64,41 @@ void test_create_password() {
   TEST_ASSERT_EQUAL(0, res);
 }
 
-void test_encrypt_decrypt_with_master_key() {
+void test_encrypt_decrypt_with_vault_key() {
   const char *plaintext = "entry-value";
-  const char *master_key = "master-key";
+  const unsigned char vault_key[crypto_secretbox_KEYBYTES] = {
+      0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19, 0x1A,
+      0x1B, 0x1C, 0x1D, 0x1E, 0x1F, 0x20, 0x21, 0x22, 0x23, 0x24, 0x25,
+      0x26, 0x27, 0x28, 0x29, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E, 0x2F};
   char *ciphertext = nullptr;
   char *decrypted = nullptr;
 
-  TEST_ASSERT_EQUAL(0, encrypt_with_master_key(plaintext, master_key, &ciphertext));
+  TEST_ASSERT_EQUAL(0, encrypt_with_vault_key(plaintext, vault_key,
+                                              sizeof(vault_key), &ciphertext));
   TEST_ASSERT_NOT_NULL(ciphertext);
   TEST_ASSERT_NOT_EQUAL(0, strcmp(ciphertext, plaintext));
+  TEST_ASSERT_EQUAL(1, is_encrypted_value(ciphertext));
 
-  TEST_ASSERT_EQUAL(0, decrypt_with_master_key(ciphertext, master_key, &decrypted));
+  TEST_ASSERT_EQUAL(0, decrypt_with_vault_key(ciphertext, vault_key,
+                                              sizeof(vault_key), &decrypted));
   TEST_ASSERT_NOT_NULL(decrypted);
   TEST_ASSERT_EQUAL_STRING(plaintext, decrypted);
 
   free(ciphertext);
   free(decrypted);
+}
+
+void test_derive_wrapping_key() {
+  const unsigned char salt[crypto_pwhash_SALTBYTES] = {
+      0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5};
+  unsigned char key_a[crypto_secretbox_KEYBYTES] = {0};
+  unsigned char key_b[crypto_secretbox_KEYBYTES] = {0};
+
+  TEST_ASSERT_EQUAL(0,
+                    derive_wrapping_key("master-key", salt, sizeof(salt), key_a));
+  TEST_ASSERT_EQUAL(0,
+                    derive_wrapping_key("master-key", salt, sizeof(salt), key_b));
+  TEST_ASSERT_EQUAL_INT(0, memcmp(key_a, key_b, sizeof(key_a)));
 }
 
 int main() {
@@ -92,6 +111,7 @@ int main() {
   RUN_TEST(test_check_hash_against_password_success);
   RUN_TEST(test_check_hash_against_password_failure);
   RUN_TEST(test_create_password);
-  RUN_TEST(test_encrypt_decrypt_with_master_key);
+  RUN_TEST(test_encrypt_decrypt_with_vault_key);
+  RUN_TEST(test_derive_wrapping_key);
   return UNITY_END();
 }
